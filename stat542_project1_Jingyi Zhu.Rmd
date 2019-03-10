@@ -1,0 +1,174 @@
+---
+title: "542_project1"
+output: html_document
+---
+
+##Project 1: Predict the Housing Prices in Ames
+
+##Introduction
+
+Analyze the housing data collected on residential properties sold in Ames, Iowa between 2006 and 2010. 
+
+The dataset has 2930 rows (i.e., houses) and 83 columns. Column 1 is "PID", the Parcel identification number, the last column is the response variable, "Sale_Price", and the remaining 81 columns are explanatory variables describing (almost) every aspect of residential homes. 
+
+Our goal is to predict the final price of a home (in log scale) with those explanatory variables. Built three prediction models:
+1. one based on linear regression models with Lasso or Ridge or Elasticnet penalty; 
+2. one based on tree models, such as randomForest or boosting tree;
+3. one based on GAM.
+
+##Deal with missing values
+There are 159 missing values in the Ames data, which are all from the variable "Garage_Yr_Blt". 
+
+```{r}
+library(glmnet)
+library(Metrics)
+library(xgboost)
+library(caret)
+#############################################################################
+#Part 1 dealing with the missing values preprocessing the training/test data
+
+data <- read.csv("~/Desktop/542_project1/Ames_data.csv", stringsAsFactors=FALSE)
+load("~/Desktop/542_project1/project1_testIDs.R")
+
+#load the training and test data
+train=read.csv("train.csv",stringsAsFactors = FALSE)
+test=read.csv("test.csv",stringsAsFactors = FALSE)
+
+#change the X matrix to a numerical matrix (no factors)
+j <- 2
+test.dat <- data[testIDs[,j], ]
+train.dat <- data[-testIDs[,j], ]
+
+train.y <- log(train.dat$Sale_Price)
+train.x <- subset(train.dat,select=-c(PID, Sale_Price))
+test.y <- log(test.dat$Sale_Price)
+test.PID <- test.dat$PID
+test.x <- subset(test.dat,select=-c(PID, Sale_Price))
+
+#dealing with the missing values replace the missing value with zero
+id=which(is.na(total$Garage_Yr_Blt))
+train.x[id, 'Garage_Yr_Blt'] = 0
+test.x[id, 'Garage_Yr_Blt'] = 0
+
+#change the X matrix to a numerical matrix (no factors)
+PreProcessingMatrixOutput <- function(train.data, test.data){
+  # generate numerical matrix of the train/test
+  # assume train.data, test.data have the same columns
+  categorical.vars <- colnames(train.data)[which(sapply(train.data, 
+                                                        function(x) is.character(x)))]
+  train.matrix <- train.data[, !colnames(train.data) %in% categorical.vars, drop=FALSE]
+  test.matrix <- test.data[, !colnames(train.data) %in% categorical.vars, drop=FALSE]
+  n.train <- nrow(train.data)
+  n.test <- nrow(test.data)
+  for(var in categorical.vars){
+    mylevels <- sort(unique(train.data[, var]))
+    m <- length(mylevels)
+    tmp.train <- matrix(0, n.train, m)
+    tmp.test <- matrix(0, n.test, m)
+    col.names <- NULL
+    for(j in 1:m){
+      tmp.train[train.data[, var]==mylevels[j], j] <- 1
+      tmp.test[test.data[, var]==mylevels[j], j] <- 1
+      col.names <- c(col.names, paste(var, '_', mylevels[j], sep=''))
+    }
+    colnames(tmp.train) <- col.names
+    colnames(tmp.test) <- col.names
+    train.matrix <- cbind(train.matrix, tmp.train)
+    test.matrix <- cbind(test.matrix, tmp.test)
+  }
+  return(list(train = as.matrix(train.matrix), test = as.matrix(test.matrix)))
+}
+
+total = PreProcessingMatrixOutput(train.x, test.x)
+train.x <- total$train
+test.x <- total$test
+```
+
+##Generate the training and test datasets
+
+The "project1_testIDs.R" has 879 rows and 10 columns. Each column contains the row numbers of the test data. Using this matrix, we can generate 10 sets of training and test data from "Ames_data.csv".
+
+```{r}
+#############################################################################
+#Part 2 XGBoost
+set.seed(3610)
+xgb.model <- xgboost(data = train.x, label = train.y, max.depth = 15, eta = 0.05, nround = 400, gamma=0.01,objective='reg:linear')
+#tmp is the fitted values using test.x
+tmp <- predict(xgb.model, test.x)
+#calculate the test error
+sqrt(mean((tmp - test.y)^2))
+
+```
+
+```{r}
+#########################################################################
+#Part 3 linear regression with lasso
+library(glmnet)
+train.y <- log(train.dat$Sale_Price)
+train.x <- subset(train.dat,select=-c(PID, Sale_Price))
+test.y <- log(test.dat$Sale_Price)
+test.PID <- test.dat$PID
+test.x <- subset(test.dat,select=-c(PID, Sale_Price))
+
+#Remove the following variables
+train.x <- subset(train.dat,select= -c(Street, Utilities, Condition_2, Roof_Matl, Heating,
+                                       Pool_QC, Misc_Feature, Low_Qual_Fin_SF, Pool_Area, 
+                                       Longitude, Latitude, PID, Sale_Price))
+test.x <- subset(test.dat,select= -c(Street, Utilities, Condition_2, Roof_Matl, Heating,
+                                       Pool_QC, Misc_Feature, Low_Qual_Fin_SF, Pool_Area, 
+                                       Longitude, Latitude, PID, Sale_Price))
+
+#Set "Mo_Sold" and "Year_Sold" as categorical variables
+train.x$YrSold=as.character(train.x$Year_Sold)
+train.x$MoSold=as.character(train.x$Mo_Sold)
+test.x$YrSold=as.character(test.x$Year_Sold)
+test.x$MoSold=as.character(test.x$Mo_Sold)
+
+#In the function ProcessWinsorization, compute the upper 95% quantile of the train column, 
+#denoted by M; then replace all values in the train and test that are bigger than M by M. 
+ProcessWinsorization <- function(train.col, test.col, upper){
+  train <- as.numeric(train.col)
+  test <- as.numeric(test.col)
+  M <- quantile(train,probs=upper)
+  index = which(train > M)
+  id = which(test > M)
+  for(i in index){
+    train[i] = M
+  }
+  for(i in id){
+    test[i] = M
+  }
+  return(list(train = as.matrix(train), test = as.matrix(test)))
+}
+
+#Apply winsorization on the following numerical variables
+winsor.vars <- c("Lot_Frontage", "Lot_Area", "Mas_Vnr_Area", "BsmtFin_SF_2", 
+                 "Bsmt_Unf_SF", "Total_Bsmt_SF", "Second_Flr_SF", 'First_Flr_SF', 
+                 "Gr_Liv_Area", "Garage_Area", "Wood_Deck_SF", "Open_Porch_SF", 
+                 "Enclosed_Porch", "Three_season_porch", "Screen_Porch", "Misc_Val")
+for(var in winsor.vars){
+  r <- ProcessWinsorization(train.x[, var], test.x[, var], 0.95)
+  train.x[, var] <- r$train
+  test.x[, var] <- r$test
+}
+
+#Call PreProcessingMatrixOutput to create the design matrix
+total = PreProcessingMatrixOutput(train.x, test.x)
+train.x <- total$train
+test.x <- total$test
+#dealing with the missing values replace the missing value with zero
+id1=which(is.na(train.x[,'Garage_Yr_Blt']))
+id2=which(is.na(test.x[,'Garage_Yr_Blt']))
+train.x[id1, 'Garage_Yr_Blt'] = 0
+test.x[id2, 'Garage_Yr_Blt'] = 0
+
+#call glmnet
+set.seed(100)
+cv.out <- cv.glmnet(train.x, train.y, alpha = 1)
+tmp <-predict(cv.out, s = cv.out$lambda.min, newx = test.x)
+sqrt(mean((tmp - test.y)^2))
+
+
+```
+
+
