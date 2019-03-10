@@ -2,10 +2,9 @@
 library(Metrics)
 
 library(caret)
-library(mgcv)
+
 #############################################################################
 #Part 1 dealing with the missing values preprocessing the training/test data
-
 data <- read.csv("~/Desktop/542_project1/Ames_data.csv", stringsAsFactors=FALSE)
 load("~/Desktop/542_project1/project1_testIDs.R")
 
@@ -14,7 +13,7 @@ train=read.csv("train.csv",stringsAsFactors = FALSE)
 test=read.csv("test.csv",stringsAsFactors = FALSE)
 
 #change the X matrix to a numerical matrix (no factors)
-j <- 3
+j <- 6
 test.dat <- data[testIDs[,j], ]
 train.dat <- data[-testIDs[,j], ]
 n.train = dim(train.dat)[1]
@@ -147,6 +146,7 @@ sqrt(mean((tmp - test.y)^2))
 
 #############################################################
 #Part4 GAM
+library(mgcv)
 train.y <- log(train.dat$Sale_Price)
 train.x <- subset(train.dat,select=-c(PID, Sale_Price))
 test.y <- log(test.dat$Sale_Price)
@@ -164,6 +164,7 @@ train.x <- subset(train.dat,select= -c(Street, Utilities, Condition_2, Roof_Matl
                                        Pool_QC, Misc_Feature, Low_Qual_Fin_SF, Pool_Area, 
                                        Longitude, Latitude, Mo_Sold, Year_Sold,
                                        PID, Sale_Price))
+
 test.x <- subset(test.dat,select= -c(Street, Utilities, Condition_2, Roof_Matl, Heating,
                                      Pool_QC, Misc_Feature, Low_Qual_Fin_SF, Pool_Area, 
                                      Longitude, Latitude, Mo_Sold, Year_Sold,
@@ -176,11 +177,16 @@ linear.vars <- c('BsmtFin_SF_1', 'Bsmt_Full_Bath', 'Bsmt_Half_Bath',
 
 #get the list of numerical variables whose nonlinear terms will be included in the gam model
 categorical.vars <- colnames(train.dat)[which(sapply(train.dat, 
-                                                     function(x) is.factor(x)))]
+                                                     function(x) is.character(x)))]
 num.vars <- names(train.dat)
 num.vars <- num.vars[num.vars != "Sale_Price"]
 num.vars <- num.vars[! num.vars %in% categorical.vars]
 num.vars <- num.vars[! num.vars %in% linear.vars]
+remove.vars <- c('Street', 'Utilities', 'Condition_2', 'Roof_Matl', 'Heating',
+                 'Pool_QC', 'Misc_Feature' , 'Low_Qual_Fin_SF', 'Pool_Area', 
+                 'Longitude', 'Latitude', 'Mo_Sold', 'Year_Sold',
+                 'PID', 'Sale_Price')
+num.vars <- num.vars[! num.vars %in% remove.vars]
 
 select.level.var = c('MS_SubClass__Duplex_All_Styles_and_Ages', 
                      'MS_SubClass__One_Story_1945_and_Older',
@@ -189,7 +195,20 @@ select.level.var = c('MS_SubClass__Duplex_All_Styles_and_Ages',
                      'Neighborhood__Crawford', 'Neighborhood__Edwards',
                      'Neighborhood__Green_Hills', 'Neighborhood__Meadow_Village',
                      'Neighborhood__Northridge', 'Neighborhood__Somerset', 
-                     'Neighborhood__Stone_Brook')
+                     'Neighborhood__Stone_Brook', 'Overall_Qual__Above_Average',
+                     'Overall_Qual__Average', 'Overall_Qual__Below_Average',
+                     'Overall_Qual__Excellent', 'Overall_Qual__Fair', 'Overall_Qual__Good',
+                     'Overall_Qual__Poor', 'Overall_Qual__Very_Excellent', 'Overall_Qual__Very_Good',
+                     'Overall_Qual__Very_Poor', 'Overall_Cond__Above_Average', 'Overall_Cond__Average',
+                     'Overall_Cond__Below_Average', 'Overall_Cond__Excellent', 'Overall_Cond__Fair',
+                     'Overall_Cond__Good', 'Overall_Cond__Poor', 'Overall_Cond__Very_Good',
+                     'Overall_Cond__Very_Poor', 'Sale_Condition__Abnorml', 'Sale_Condition__AdjLand',
+                     'Sale_Condition__Alloca', 'Sale_Condition__Family', 'Sale_Condition__Normal',
+                     'Sale_Condition__Partial', 'Sale_Type__COD', 'Sale_Type__Con', 'Sale_Type__ConLD',
+                     'Sale_Type__ConLI', 'Sale_Type__ConLw', 'Sale_Type__CWD', 'Sale_Type__New',
+                     'Sale_Type__Oth', 'Sale_Type__VWD', 'Sale_Type__WD', 'Bldg_Type__Duplex',
+                     'Bldg_Type__OneFam', 'Bldg_Type__Twnhs', 'Bldg_Type__TwnhsE',
+                     'Bldg_Type__TwoFmCon')
 
 #generate select.binary.vars
 m <- length(select.level.var)
@@ -208,7 +227,14 @@ for(i in 1:m){
 select.binary.vars <- colnames(tmp.train, tmp.test)
 
 #create training and test data frame
+train.x <- data.frame(train.x[,linear.vars], tmp.train[,select.binary.vars], train.x[,num.vars],train.y)
+test.x <-data.frame(test.x[,linear.vars], tmp.test[,select.binary.vars], test.x[,num.vars])
+colnames(train.x)[82] <- "Sale_Price"
 
+id1=which(is.na(train.x[,'Garage_Yr_Blt']))
+id2=which(is.na(test.x[,'Garage_Yr_Blt']))
+train.x[id1, 'Garage_Yr_Blt'] = 0
+test.x[id2, 'Garage_Yr_Blt'] = 0
 #call GAM
 gam.formula <- paste0("Sale_Price ~ ", linear.vars[1])
 for(var in c(linear.vars[-1], select.binary.vars))
@@ -217,10 +243,9 @@ for(var in num.vars)
   gam.formula <- paste0(gam.formula, " + s(", var, ")")
 gam.formula <- as.formula(gam.formula)
 
-gam.model <- gam(gam.formula, data = c(train.y, train.x), method="REML")
+gam.model <- gam(gam.formula, data = train.x, method="REML")
 tmp <- predict.gam(gam.model, newdata = test.x)
 sqrt(mean((tmp - test.y)^2))
-
 
 
 
